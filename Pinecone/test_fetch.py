@@ -1,39 +1,59 @@
 #!/usr/bin/env python3
 """
-Simple test to verify fetch vectors functionality is working.
+Simple test to verify fetch vectors functionality is working with Pinecone embeddings.
 """
 
-import numpy as np
+import os
 from Pinecone_utils import (
     initialize_pinecone, connect_to_index, create_index,
-    upsert_vectors, fetch_vectors, delete_index
+    upsert_vectors, fetch_vectors, delete_index,
+    generate_embedding, generate_embeddings_batch,
+    list_indexes
 )
 
 def test_fetch_vectors():
-    """Test the fetch vectors functionality."""
+    """Test the fetch vectors functionality with Pinecone embeddings."""
     
-    INDEX_NAME = "test-fetch-index"
-    DIMENSION = 64
+    # Use environment variable or fallback to test index
+    INDEX_NAME = os.getenv('PINECONE_INDEX_NAME', 'test-fetch-embeddings-index')
+    DIMENSION = 768  # Default dimension for BAAI/bge-base-en-v1.5 model
     
     try:
         print("🧪 Testing fetch vectors functionality...")
         
         # Initialize and create index
         initialize_pinecone()
-        create_index(INDEX_NAME, DIMENSION)
+        
+        # Check if index already exists
+        existing_indexes = list_indexes()
+        if INDEX_NAME in existing_indexes:
+            print(f"ℹ️  Index '{INDEX_NAME}' already exists, connecting to it...")
+        else:
+            print(f"📦 Creating new index '{INDEX_NAME}'...")
+            create_index(INDEX_NAME, DIMENSION)
+        
         connect_to_index(INDEX_NAME)
         
-        # Create test vectors
+        # Create test texts and generate embeddings
+        test_texts = [
+            "Machine learning is a subset of artificial intelligence that enables computers to learn from data",
+            "Deep learning uses neural networks with multiple layers to process complex patterns"
+        ]
+        
+        print("🔤 Generating embeddings for test texts...")
+        embeddings = generate_embeddings_batch(test_texts)
+        
+        # Create test vectors with embeddings
         test_vectors = [
             {
                 "id": "test-vec-1",
-                "values": np.random.random(DIMENSION).tolist(),
-                "metadata": {"category": "test", "value": 1}
+                "values": embeddings[0],
+                "metadata": {"category": "test", "value": 1, "text": test_texts[0]}
             },
             {
                 "id": "test-vec-2", 
-                "values": np.random.random(DIMENSION).tolist(),
-                "metadata": {"category": "test", "value": 2}
+                "values": embeddings[1],
+                "metadata": {"category": "test", "value": 2, "text": test_texts[1]}
             }
         ]
         
@@ -57,7 +77,9 @@ def test_fetch_vectors():
             
             for vec_id, vector_data in vectors.items():
                 print(f"  - {vec_id}: {len(vector_data.values)} dimensions")
-                print(f"    Metadata: {vector_data.metadata}")
+                print(f"    Text: {vector_data.metadata.get('text', 'N/A')[:80]}...")
+                print(f"    Category: {vector_data.metadata.get('category', 'N/A')}")
+                print(f"    Value: {vector_data.metadata.get('value', 'N/A')}")
         else:
             print("❌ No 'vectors' attribute found in response")
             

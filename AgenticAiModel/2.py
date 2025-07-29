@@ -33,8 +33,9 @@ from pprint import pprint
 try:
     from dotenv import load_dotenv
     # Load environment variables from config.env file
-    load_dotenv('config.env')
     load_dotenv('../Pinecone/pinecone.env')
+
+    load_dotenv('config.env')
     print("Successfully loaded API keys from config.env")
 except ImportError:
     print("python-dotenv not installed. Install with: pip install python-dotenv")
@@ -97,8 +98,9 @@ system_prompt = ('''You are a workflow supervisor managing a team of three agent
 
 **Routing Guidelines**:
 - Use 'enhancer' for unclear or vague queries that need clarification
-- Use 'researcher' for questions requiring current, real-time information from the web
-- Use 'rag' for questions that can be answered using stored knowledge and documents
+- Use 'researcher' for questions requiring current, real-time information from the web (news, weather, live data)
+- Use 'rag' for questions about stored knowledge, courses, features, or information that can be found in the knowledge base
+- Questions about courses, features, or general information about a specific website should go to RAG
 ''')
 
 class Supervisor(BaseModel):
@@ -219,10 +221,20 @@ def research_node(state: MessagesState) -> Command[Literal["validator"]]:
 
         print(f"Current Node: Research -> Goto: validator")
 
+        # Handle different result formats
+        if isinstance(result, dict) and "output" in result:
+            content = result["output"]
+        elif hasattr(result, "output"):
+            content = result.output
+        elif hasattr(result, "messages") and result.messages:
+            content = result.messages[-1].content
+        else:
+            content = str(result)
+
         return Command(
             update={
                 "messages": [
-                    HumanMessage(content=result["output"], name="researcher")
+                    HumanMessage(content=content, name="researcher")
                 ]
             },
             goto="validator",
@@ -247,7 +259,7 @@ def rag_node(state: MessagesState) -> Command[Literal["validator"]]:
         # Import Pinecone utilities
         import sys
         sys.path.append('../Pinecone')
-        from Pinecone_utils import initialize_pinecone, connect_to_index, query_vectors, generate_embedding, list_indexes
+        from Pinecone_utils import initialize_pinecone, connect_to_index, query_vectors, generate_embedding
         
         # Initialize Pinecone connection
         if not initialize_pinecone():
@@ -257,92 +269,22 @@ def rag_node(state: MessagesState) -> Command[Literal["validator"]]:
         if not connect_to_index():
             raise Exception("Failed to connect to Pinecone index")
         
-        # Extract the user's query and website context from the state
-        user_query = None
-        website_name = None
+        # Extract the user's query from the state
+        user_query = state["messages"][0].content
+        print(f"User Query: {user_query}")
         
-        # Look for website specification in the messages
-        for msg in reversed(state["messages"]):
-            if hasattr(msg, 'name') and msg.name == "user":
-                user_query = msg.content
-                # Check if query contains website specification
-                if "website:" in user_query.lower():
-                    parts = user_query.split("website:", 1)
-                    if len(parts) > 1:
-                        user_query = parts[0].strip()
-                        website_name = parts[1].strip()
-                break
+        # Set the website name (you can make this dynamic later)
+        website_name = "Piyush"
+        print(f"Searching in website: {website_name}")
         
-        if not user_query:
-            user_query = state["messages"][-1].content
-        
-        # If no website specified, try to get available websites from Pinecone
-        if not website_name:
-            try:
-                # Query to get available websites
-                sample_query = "PiyushGarg"
-                sample_embedding = generate_embedding(sample_query)
-                
-                # Get a sample of documents to find available websites
-                sample_results = query_vectors(
-                    vector=sample_embedding,
-                    top_k=10,
-                    include_metadata=True,
-                    include_values=False
-                )
-                
-                available_websites = set()
-                for match in sample_results.matches:
-                    if hasattr(match, 'metadata') and match.metadata:
-                        website = match.metadata.get('website_name', '')
-                        if website:
-                            available_websites.add(website)
-                
-                if available_websites:
-                    website_list = ", ".join(sorted(available_websites))
-                    response_content = f"I found the following websites in the knowledge base: {website_list}. Please specify which website you'd like to query by adding 'website: [website_name]' to your question."
-                    
-                    return Command(
-                        update={
-                            "messages": [
-                                HumanMessage(content=response_content, name="rag")
-                            ]
-                        },
-                        goto="validator",
-                    )
-                else:
-                    response_content = "No websites found in the knowledge base. Please ensure your Pinecone index contains documents with website_name metadata."
-                    
-                    return Command(
-                        update={
-                            "messages": [
-                                HumanMessage(content=response_content, name="rag")
-                            ]
-                        },
-                        goto="validator",
-                    )
-                    
-            except Exception as e:
-                print(f"Error getting available websites: {e}")
-                response_content = "Please specify a website by adding 'website: [website_name]' to your question."
-                
-                return Command(
-                    update={
-                        "messages": [
-                            HumanMessage(content=response_content, name="rag")
-                        ]
-                    },
-                    goto="validator",
-                )
-        
-        # Generate embedding for the query using Pinecone utilities
+        # Generate embedding for the user query
         query_embedding = generate_embedding(user_query)
+        print(f"Generated embedding for query: {len(query_embedding)} dimensions")
         
         # Prepare filter for website-specific query
         filter_dict = {
             'website_name': {'$eq': website_name}
         }
-        print(f"Filtering for website: {website_name}")
         
         # Query Pinecone with website-specific filter
         try:
@@ -354,36 +296,20 @@ def rag_node(state: MessagesState) -> Command[Literal["validator"]]:
                 include_values=False
             )
             matches = results.matches if hasattr(results, 'matches') else []
+            print(f"Found {len(matches)} relevant chunks")
         except Exception as query_error:
             print(f"Error in Pinecone query: {query_error}")
             matches = []
         
-        # Extract retrieved documents with website information
+        # Extract retrieved documents
         retrieved_docs = []
-        website_sources = set()
-        chunk_info = []
         
-        for match in matches:
+        for i, match in enumerate(matches):
             if hasattr(match, 'metadata') and match.metadata:
                 text = match.metadata.get('text', '')
-                website = match.metadata.get('website_name', 'Unknown')
-                source_url = match.metadata.get('source_url', '')
-                chunk_index = match.metadata.get('chunk_index', 'Unknown')
-                chunk_size = match.metadata.get('chunk_size', 'Unknown')
-                total_chunks = match.metadata.get('total_chunks', 'Unknown')
-                
                 retrieved_docs.append(text)
-                website_sources.add(website)
-                chunk_info.append({
-                    'chunk_index': chunk_index,
-                    'chunk_size': chunk_size,
-                    'total_chunks': total_chunks,
-                    'source_url': source_url,
-                    'score': match.score
-                })
-                
-                print(f"Retrieved chunk {chunk_index}/{total_chunks} from {website}: {source_url} (Score: {match.score:.4f})")
-        
+                print(f"Chunk {i+1} retrieved (Score: {match.score:.4f})")
+
         # If no documents found, provide a fallback response
         if not retrieved_docs:
             response_content = f"I couldn't find relevant information for '{user_query}' in the knowledge base for website '{website_name}'. Please try rephrasing your question or ask about a different topic."
@@ -391,23 +317,31 @@ def rag_node(state: MessagesState) -> Command[Literal["validator"]]:
             # Build context from retrieved documents
             context = "\n\n".join(retrieved_docs)
             
-            # Create a prompt for the LLM
-            rag_prompt = f"""Based on the following retrieved information from website '{website_name}', please answer the user's question. 
-            If the information is not sufficient to answer the question completely, acknowledge what you can answer and what additional information might be needed.
+            # Create a comprehensive prompt for the LLM
+            rag_prompt = f"""You are a helpful AI assistant that answers questions based on retrieved information from a specific website. 
 
-            Retrieved Information from {website_name}:
-            {context}
+CONTEXT FROM WEBSITE '{website_name}':
+{context}
 
-            User Question: {user_query}
+USER QUESTION: {user_query}
 
-            Answer:"""
+INSTRUCTIONS:
+1. Answer the user's question based ONLY on the provided context from the website
+2. If the context contains enough information to answer the question, provide a comprehensive and accurate response
+3. If the context is insufficient, acknowledge what you can answer and mention what additional information might be needed
+4. Be specific and reference the source information when possible
+5. If the question cannot be answered from the provided context, clearly state this
+6. Use a helpful and professional tone
+7. Structure your response logically and clearly
+
+ANSWER:"""
             
             # Generate response using the LLM
             llm_response = llm.invoke(rag_prompt)
             response_content = llm_response.content
         
         print(f"Current Node: RAG -> Goto: validator")
-        print(f"Retrieved {len(retrieved_docs)} documents from {len(website_sources)} website(s)")
+        print(f"Retrieved {len(retrieved_docs)} documents from {website_name}")
 
         return Command(
             update={
@@ -542,13 +476,26 @@ def run_workflow(user_input: str):
 if __name__ == "__main__":
     # Test the workflow with different types of queries
     test_queries = [
-        "What is elancode is made for ?",  # This would use RAG if you have data science docs in Pinecone
+        "What courses are offered?",  # This would use RAG if you have data science docs in Pinecone
+        "What is the purpose of Elancode?",
+        "what is the Best course on the Elancode"  # This would use RAG if you have data science docs in Pinecone
     ]
     
     print("Multi-Agent Architecture Workflow")
     print("=" * 50)
     
-    for i, query in enumerate(test_queries, 1):
+    # for i, query in enumerate(test_queries, 1):
+    #     print(f"\nTest {i}: {query}")
+    #     print("-" * 30)
+    #     try:
+    #         run_workflow(query)
+    #     except Exception as e:
+    #         print(f"Error running workflow: {e}")
+    #     print("\n" + "=" * 50)
+
+
+    for i in range(100):
+        query = input("Enter your query: ")
         print(f"\nTest {i}: {query}")
         print("-" * 30)
         try:
@@ -556,6 +503,5 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Error running workflow: {e}")
         print("\n" + "=" * 50)
-
 
 

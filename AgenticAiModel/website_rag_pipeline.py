@@ -76,6 +76,7 @@ class WebsiteRAGPipeline:
                 self.logger.error("Failed to initialize Pinecone")
                 return False
             try:
+
                 index_name = os.getenv('PINECONE_INDEX_NAME', 'rag-model-agentic-ai')
                 create_index(index_name)
                 self.logger.info(f"Created new Pinecone index: {index_name}")

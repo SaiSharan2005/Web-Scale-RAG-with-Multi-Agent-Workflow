@@ -16,5 +16,14 @@
     "added_at": "2025-07-29T16:55:25.708583",
     "last_updated": "2025-07-29T16:55:25.708583",
     "status": "active"
+  },
+  "Piyush": {
+    "url": "https://www.piyushgarg.dev/",
+    "name": "Piyush",
+    "chunk_size": 1000,
+    "overlap": 200,
+    "added_at": "2025-07-30T02:00:32.037381",
+    "last_updated": "2025-07-30T02:00:32.037381",
+    "status": "active"
   }
 }

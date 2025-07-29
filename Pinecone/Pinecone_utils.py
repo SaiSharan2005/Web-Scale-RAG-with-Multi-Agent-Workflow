@@ -470,3 +470,77 @@ def is_connected() -> bool:
         bool: True if connected, False otherwise
     """
     return _client.pc is not None and _client.current_index is not None
+
+def generate_embedding(text: str, model_name: str = "BAAI/bge-base-en-v1.5") -> List[float]:
+    """
+    Generate embedding for text using SentenceTransformer.
+    
+    Args:
+        text: Text to embed
+        model_name: Name of the SentenceTransformer model to use
+        
+    Returns:
+        List of float values representing the embedding
+        
+    Raises:
+        Exception: If embedding generation fails
+    """
+    try:
+        from sentence_transformers import SentenceTransformer
+        
+        # Load the model (will be cached after first load)
+        if not hasattr(generate_embedding, '_model') or generate_embedding._model_name != model_name:
+            generate_embedding._model = SentenceTransformer(model_name)
+            generate_embedding._model_name = model_name
+            logger.info(f"Loaded SentenceTransformer model: {model_name}")
+        
+        # Generate embedding
+        embedding = generate_embedding._model.encode([text])[0]
+        logger.info(f"Generated embedding for text (length: {len(text)})")
+        return embedding.tolist()
+        
+    except ImportError:
+        error_msg = "sentence-transformers not installed. Install with: pip install sentence-transformers"
+        logger.error(error_msg)
+        raise Exception(error_msg)
+    except Exception as e:
+        error_msg = f"Failed to generate embedding: {str(e)}"
+        logger.error(error_msg)
+        raise Exception(error_msg)
+
+def generate_embeddings_batch(texts: List[str], model_name: str = "BAAI/bge-base-en-v1.5") -> List[List[float]]:
+    """
+    Generate embeddings for multiple texts using SentenceTransformer.
+    
+    Args:
+        texts: List of texts to embed
+        model_name: Name of the SentenceTransformer model to use
+        
+    Returns:
+        List of embeddings (each embedding is a list of floats)
+        
+    Raises:
+        Exception: If embedding generation fails
+    """
+    try:
+        from sentence_transformers import SentenceTransformer
+        
+        # Load the model (will be cached after first load)
+        if not hasattr(generate_embeddings_batch, '_model') or generate_embeddings_batch._model_name != model_name:
+            generate_embeddings_batch._model = SentenceTransformer(model_name)
+            generate_embeddings_batch._model_name = model_name
+            logger.info(f"Loaded SentenceTransformer model: {model_name}")
+        
+        # Generate embeddings for all texts
+        embeddings = generate_embeddings_batch._model.encode(texts)
+        logger.info(f"Generated embeddings for {len(texts)} texts")
+        return embeddings.tolist()
+        
+    except ImportError:
+        error_msg = "sentence-transformers not installed. Install with: pip install sentence-transformers"
+        logger.error(error_msg)
+        raise Exception(error_msg)
+    except Exception as e:
+        error_msg = f"Failed to generate embeddings: {str(e)}"
+        logger.error(error_msg)
+        raise Exception(error_msg)

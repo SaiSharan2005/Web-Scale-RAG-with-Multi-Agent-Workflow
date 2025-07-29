@@ -1,186 +1,356 @@
+#!/usr/bin/env python3
 """
-Example usage of the Pinecone utilities module.
+Pinecone Utils Example
 
-This script demonstrates:
-1. Initializing the Pinecone client
-2. Creating an index
-3. Connecting to the index
-4. Upserting vectors
-5. Querying vectors
-6. Fetching vectors
-7. Getting index statistics
-8. Cleaning up
+This example demonstrates how to use the Pinecone utilities with text embeddings
+for semantic search and document retrieval.
 
-Before running:
-1. Install dependencies: pip install pinecone-client python-dotenv
-2. Set your PINECONE_API_KEY in a .env file or environment variable
+Features demonstrated:
+- Initialize Pinecone with environment configuration
+- Generate text embeddings using SentenceTransformer
+- Upsert vectors with metadata
+- Query similar documents
+- Handle errors gracefully
+
+Usage:
+    python example.py
 """
 
-import numpy as np
-from Pinecone_utils import (
-    initialize_pinecone, connect_to_index, create_index, delete_index,
-    list_indexes, upsert_vectors, query_vectors, fetch_vectors,
-    get_index_stats, PineconeContext
+import os
+import sys
+from typing import List, Dict, Any
+
+# Add the parent directory to the path to import Pinecone_utils
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from Pinecone.Pinecone_utils import (
+    initialize_pinecone, 
+    connect_to_index,
+    generate_embedding,
+    generate_embeddings_batch,
+    upsert_vectors,
+    query_vectors,
+    fetch_vectors,
+    get_index_stats,
+    list_indexes,
+    is_connected,
+    get_current_index_name
 )
 
-def main():
-    """Main example function demonstrating Pinecone operations."""
+def setup_pinecone() -> bool:
+    """
+    Initialize and connect to Pinecone.
     
-    # Configuration
-    INDEX_NAME = "example-index"
-    DIMENSION = 128
+    Returns:
+        bool: True if setup successful, False otherwise
+    """
+    try:
+        print("🔧 Initializing Pinecone...")
+        
+        # Initialize Pinecone (loads from pinecone.env)
+        if not initialize_pinecone():
+            print("❌ Failed to initialize Pinecone")
+            return False
+        
+        # Connect to index (loads from pinecone.env)
+        if not connect_to_index():
+            print("❌ Failed to connect to index")
+            return False
+        
+        print(f"✅ Connected to index: {get_current_index_name()}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Setup failed: {e}")
+        return False
+
+def demonstrate_embeddings():
+    """Demonstrate text embedding generation."""
+    print("\n🔤 Text Embedding Examples")
+    print("=" * 50)
+    
+    # Single text embedding
+    sample_text = "Machine learning is a subset of artificial intelligence"
+    print(f"Generating embedding for: '{sample_text}'")
     
     try:
-        print("🚀 Starting Pinecone example...")
+        embedding = generate_embedding(sample_text)
+        print(f"✅ Generated embedding with {len(embedding)} dimensions")
+        print(f"   First 5 values: {embedding[:5]}")
         
-        # Step 1: Initialize Pinecone client
-        print("\n1. Initializing Pinecone client...")
-        if not initialize_pinecone():
-            print("❌ Failed to initialize Pinecone client")
-            return
-        print("✅ Pinecone client initialized")
+    except Exception as e:
+        print(f"❌ Embedding generation failed: {e}")
+        return
+    
+    # Batch embeddings
+    texts = [
+        "Deep learning uses neural networks",
+        "Natural language processing helps computers understand text",
+        "Computer vision enables machines to see and interpret images",
+        "Reinforcement learning learns through trial and error"
+    ]
+    
+    print(f"\nGenerating batch embeddings for {len(texts)} texts...")
+    
+    try:
+        embeddings = generate_embeddings_batch(texts)
+        print(f"✅ Generated {len(embeddings)} embeddings")
         
-        # Step 2: List existing indexes
-        print("\n2. Listing existing indexes...")
-        indexes = list_indexes()
-        print(f"📋 Found indexes: {indexes}")
-        
-        # Step 3: Create index if it doesn't exist
-        print(f"\n3. Creating index '{INDEX_NAME}' if it doesn't exist...")
-        if INDEX_NAME not in indexes:
-            create_index(INDEX_NAME, DIMENSION, metric='cosine')
-            print(f"✅ Index '{INDEX_NAME}' created")
-        else:
-            print(f"ℹ️  Index '{INDEX_NAME}' already exists")
-        
-        # Step 4: Connect to the index
-        print(f"\n4. Connecting to index '{INDEX_NAME}'...")
-        if not connect_to_index(INDEX_NAME):
-            print("❌ Failed to connect to index")
-            return
-        print("✅ Connected to index")
-        
-        # Step 5: Generate sample vectors
-        print("\n5. Generating sample vectors...")
-        sample_vectors = []
-        for i in range(5):
-            vector_id = f"vec-{i}"
-            vector_values = np.random.random(DIMENSION).tolist()
-            metadata = {
-                "category": f"category-{i % 3}",
-                "timestamp": f"2024-01-{i+1:02d}",
-                "value": i * 10
+        for i, (text, emb) in enumerate(zip(texts, embeddings)):
+            print(f"   Text {i+1}: {len(emb)} dimensions")
+            
+    except Exception as e:
+        print(f"❌ Batch embedding generation failed: {e}")
+
+def demonstrate_vector_operations():
+    """Demonstrate vector operations with embeddings."""
+    print("\n📊 Vector Operations Examples")
+    print("=" * 50)
+    
+    # Sample documents with metadata
+    documents = [
+        {
+            "id": "doc1",
+            "text": "Machine learning algorithms can learn patterns from data",
+            "metadata": {
+                "title": "ML Introduction",
+                "category": "technology",
+                "author": "AI Expert"
             }
-            sample_vectors.append({
-                "id": vector_id,
-                "values": vector_values,
-                "metadata": metadata
+        },
+        {
+            "id": "doc2",
+            "text": "Deep learning uses neural networks with multiple layers for complex tasks",
+            "metadata": {
+                "title": "Deep Learning Basics",
+                "category": "technology", 
+                "author": "ML Researcher"
+            }
+        },
+        {
+            "id": "doc3",
+            "text": "Natural language processing enables computers to understand human language",
+            "metadata": {
+                "title": "NLP Overview",
+                "category": "technology",
+                "author": "NLP Specialist"
+            }
+        },
+        {
+            "id": "doc4",
+            "text": "Computer vision helps machines interpret and analyze visual information",
+            "metadata": {
+                "title": "Computer Vision",
+                "category": "technology",
+                "author": "CV Engineer"
+            }
+        },
+        {
+            "id": "doc5",
+            "text": "Reinforcement learning agents learn optimal behavior through interaction",
+            "metadata": {
+                "title": "Reinforcement Learning",
+                "category": "technology",
+                "author": "RL Scientist"
+            }
+        }
+    ]
+    
+    print(f"Preparing {len(documents)} documents for vector operations...")
+    
+    try:
+        # Generate embeddings for all documents
+        texts = [doc["text"] for doc in documents]
+        embeddings = generate_embeddings_batch(texts)
+        
+        # Prepare vectors for Pinecone
+        vectors = []
+        for i, doc in enumerate(documents):
+            vectors.append({
+                "id": doc["id"],
+                "values": embeddings[i],
+                "metadata": {
+                    "text": doc["text"],
+                    "title": doc["metadata"]["title"],
+                    "category": doc["metadata"]["category"],
+                    "author": doc["metadata"]["author"]
+                }
             })
-        print(f"📊 Generated {len(sample_vectors)} sample vectors")
         
-        # Step 6: Upsert vectors
-        print("\n6. Upserting vectors to index...")
-        upsert_response = upsert_vectors(sample_vectors)
-        print(f"✅ Upserted vectors: {upsert_response}")
+        print(f"✅ Prepared {len(vectors)} vectors with embeddings")
         
-        # Step 7: Get index statistics
-        print("\n7. Getting index statistics...")
+        # Upsert vectors to Pinecone
+        print("\n📤 Upserting vectors to Pinecone...")
+        upsert_response = upsert_vectors(vectors)
+        print(f"✅ Upserted {upsert_response['upserted_count']} vectors successfully")
+        
+        # Get index statistics
         stats = get_index_stats()
-        print(f"📈 Index stats: {stats}")
+        print(f"📈 Index statistics: {stats['total_vector_count']} total vectors")
         
-        # Step 8: Query vectors
-        print("\n8. Querying similar vectors...")
-        query_vector = np.random.random(DIMENSION).tolist()
-        query_response = query_vectors(
-            vector=query_vector,
-            top_k=3,
-            filter={"category": {"$eq": "category-1"}},
+        return vectors
+        
+    except Exception as e:
+        print(f"❌ Vector operations failed: {e}")
+        return None
+
+def demonstrate_search():
+    """Demonstrate semantic search capabilities."""
+    print("\n🔍 Semantic Search Examples")
+    print("=" * 50)
+    
+    # Sample queries
+    queries = [
+        "How do machines learn from data?",
+        "What is neural network technology?",
+        "How can computers understand language?",
+        "What is visual computing?",
+        "How do agents learn through experience?"
+    ]
+    
+    for i, query in enumerate(queries, 1):
+        print(f"\n🔎 Query {i}: '{query}'")
+        print("-" * 40)
+        
+        try:
+            # Generate embedding for query
+            query_embedding = generate_embedding(query)
+            
+            # Search for similar documents
+            results = query_vectors(
+                vector=query_embedding,
+                top_k=3,
+                include_metadata=True
+            )
+            
+            print(f"Found {len(results.matches)} similar documents:")
+            
+            for j, match in enumerate(results.matches, 1):
+                print(f"  {j}. Score: {match.score:.4f}")
+                print(f"     Title: {match.metadata.get('title', 'N/A')}")
+                print(f"     Author: {match.metadata.get('author', 'N/A')}")
+                print(f"     Text: {match.metadata.get('text', 'N/A')[:80]}...")
+                print()
+                
+        except Exception as e:
+            print(f"❌ Search failed: {e}")
+
+def demonstrate_filtered_search():
+    """Demonstrate search with metadata filters."""
+    print("\n🎯 Filtered Search Examples")
+    print("=" * 50)
+    
+    query = "How do machines learn?"
+    print(f"🔎 Query: '{query}'")
+    
+    try:
+        query_embedding = generate_embedding(query)
+        
+        # Search with category filter
+        print("\n📂 Filtering by category 'technology':")
+        results = query_vectors(
+            vector=query_embedding,
+            top_k=5,
+            filter={"category": "technology"},
             include_metadata=True
         )
         
-        print(f"🔍 Query results:")
-        # New Pinecone API returns QueryResponse object, not dict
-        matches = query_response.matches if hasattr(query_response, 'matches') else []
-        for match in matches:
-            print(f"  - ID: {match.id}, Score: {match.score:.4f}")
-            print(f"    Metadata: {match.metadata if hasattr(match, 'metadata') else {}}")
+        print(f"Found {len(results.matches)} technology documents:")
+        for i, match in enumerate(results.matches, 1):
+            print(f"  {i}. {match.metadata.get('title', 'N/A')} (Score: {match.score:.4f})")
         
-        # Step 9: Fetch specific vectors
-        print("\n9. Fetching specific vectors...")
-        fetch_ids = ["vec-0", "vec-2"]
-        fetch_response = fetch_vectors(fetch_ids)
-        print(f"📥 Fetched vectors:")
-        # New Pinecone API returns FetchResponse object, not dict
-        vectors = fetch_response.vectors if hasattr(fetch_response, 'vectors') else {}
-        for vec_id, vector_data in vectors.items():
-            print(f"  - {vec_id}: {len(vector_data.get('values', []))} dimensions")
-            print(f"    Metadata: {vector_data.get('metadata', {})}")
+        # Search with author filter
+        print("\n👤 Filtering by author 'AI Expert':")
+        results = query_vectors(
+            vector=query_embedding,
+            top_k=5,
+            filter={"author": "AI Expert"},
+            include_metadata=True
+        )
         
-        print("\n✅ Example completed successfully!")
-        
+        print(f"Found {len(results.matches)} documents by AI Expert:")
+        for i, match in enumerate(results.matches, 1):
+            print(f"  {i}. {match.metadata.get('title', 'N/A')} (Score: {match.score:.4f})")
+            
     except Exception as e:
-        print(f"❌ Error occurred: {str(e)}")
-    
-    finally:
-        # Optional: Clean up the example index
-        cleanup = input("\n🗑️  Delete the example index? (y/N): ").lower().strip()
-        if cleanup == 'y':
-            try:
-                delete_index(INDEX_NAME)
-                print(f"✅ Index '{INDEX_NAME}' deleted")
-            except Exception as e:
-                print(f"❌ Failed to delete index: {str(e)}")
+        print(f"❌ Filtered search failed: {e}")
 
-def context_manager_example():
-    """Example using the context manager for automatic setup/cleanup."""
+def demonstrate_fetch():
+    """Demonstrate fetching specific vectors."""
+    print("\n📥 Fetch Examples")
+    print("=" * 50)
     
-    print("\n🔄 Context Manager Example:")
-    INDEX_NAME = "context-example"
+    # Fetch specific documents
+    doc_ids = ["doc1", "doc3", "doc5"]
+    print(f"Fetching documents: {doc_ids}")
     
     try:
-        # Create index first
-        initialize_pinecone()
-        if INDEX_NAME not in list_indexes():
-            create_index(INDEX_NAME, 128)
+        fetch_response = fetch_vectors(doc_ids)
+        print(f"✅ Fetched {len(fetch_response.vectors)} vectors")
         
-        # Use context manager
-        with PineconeContext(INDEX_NAME) as ctx:
-            print("📌 Inside context manager - connected to index")
-            
-            # Generate and upsert a simple vector
-            test_vector = {
-                "id": "test-vector",
-                "values": np.random.random(128).tolist(),
-                "metadata": {"test": True}
-            }
-            
-            upsert_vectors([test_vector])
-            print("✅ Vector upserted in context")
-            
-            # Query the vector
-            query_result = query_vectors(
-                vector=test_vector["values"],
-                top_k=1,
-                include_metadata=True
-            )
-            # New Pinecone API returns QueryResponse object, not dict
-            matches_count = len(query_result.matches) if hasattr(query_result, 'matches') else 0
-            print(f"🔍 Query result: {matches_count} matches")
-        
-        print("📌 Exited context manager")
-        
-        # Cleanup
-        delete_index(INDEX_NAME)
-        print(f"✅ Cleaned up index '{INDEX_NAME}'")
-        
+        for doc_id in doc_ids:
+            if doc_id in fetch_response.vectors:
+                vector = fetch_response.vectors[doc_id]
+                print(f"  📄 {doc_id}: {len(vector.values)} dimensions")
+                if vector.metadata:
+                    print(f"     Title: {vector.metadata.get('title', 'N/A')}")
+            else:
+                print(f"  ❌ {doc_id}: Not found")
+                
     except Exception as e:
-        print(f"❌ Context manager example error: {str(e)}")
+        print(f"❌ Fetch failed: {e}")
+
+def main():
+    """Main example function."""
+    print("🚀 Pinecone Utils Example")
+    print("=" * 60)
+    print("This example demonstrates Pinecone utilities with text embeddings")
+    print("Make sure you have configured pinecone.env with your credentials")
+    print()
+    
+    # Check if connected
+    if not is_connected():
+        print("❌ Not connected to Pinecone. Please check your configuration.")
+        print("   Ensure pinecone.env is properly configured with:")
+        print("   - PINECONE_API_KEY")
+        print("   - PINECONE_ENVIRONMENT") 
+        print("   - PINECONE_INDEX_NAME")
+        return
+    
+    # Setup Pinecone
+    if not setup_pinecone():
+        return
+    
+    # List available indexes
+    try:
+        indexes = list_indexes()
+        print(f"📋 Available indexes: {indexes}")
+    except Exception as e:
+        print(f"⚠️  Could not list indexes: {e}")
+    
+    # Demonstrate embeddings
+    demonstrate_embeddings()
+    
+    # Demonstrate vector operations
+    vectors = demonstrate_vector_operations()
+    if not vectors:
+        return
+    
+    # Demonstrate search
+    demonstrate_search()
+    
+    # Demonstrate filtered search
+    demonstrate_filtered_search()
+    
+    # Demonstrate fetch
+    demonstrate_fetch()
+    
+    print("\n✅ Example completed successfully!")
+    print("\n💡 Tips:")
+    print("   - Check the logs for detailed information")
+    print("   - Use different embedding models for specific use cases")
+    print("   - Experiment with different metadata filters")
+    print("   - Monitor index statistics for performance")
 
 if __name__ == "__main__":
-    # Run main example
     main()
-    
-    # Run context manager example
-    context_manager_example()
-    
-    print("\n🎉 All examples completed!")

@@ -61,7 +61,7 @@ class DomainCrawler:
         self.delay = delay
         self.user_agent = user_agent
         self.debug_text_extraction = debug_text_extraction
-        self.limit = limit
+        self.limit = 30
         self.respect_robots = respect_robots
         self.custom_disallow = custom_disallow or []
         
