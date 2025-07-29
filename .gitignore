@@ -1,0 +1,3 @@
+# Environment files with API keys
+.env
+*.env 
