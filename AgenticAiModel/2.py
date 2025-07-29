@@ -15,7 +15,7 @@ A multi-agent architecture consists of multiple agents working together to solve
 """
 
 # Install required libraries (uncomment if needed)
-# !pip install -q langchain langchain_groq langchain_community langgraph rizaio python-dotenv pinecone-client
+# !pip install -q langchain langchain_groq langchain_community langgraph rizaio python-dotenv pinecone-client sentence-transformers
 
 import os
 from typing import Annotated, Sequence, List, Literal
@@ -34,6 +34,7 @@ try:
     from dotenv import load_dotenv
     # Load environment variables from config.env file
     load_dotenv('config.env')
+    load_dotenv('../Pinecone/pinecone.env')
     print("Successfully loaded API keys from config.env")
 except ImportError:
     print("python-dotenv not installed. Install with: pip install python-dotenv")
@@ -98,8 +99,6 @@ system_prompt = ('''You are a workflow supervisor managing a team of three agent
 - Use 'enhancer' for unclear or vague queries that need clarification
 - Use 'researcher' for questions requiring current, real-time information from the web
 - Use 'rag' for questions that can be answered using stored knowledge and documents
-
-Your goal is to maximize accuracy and effectiveness by leveraging each agent's unique expertise while ensuring smooth workflow execution.
 ''')
 
 class Supervisor(BaseModel):
@@ -110,77 +109,80 @@ class Supervisor(BaseModel):
                     "'rag' for retrieving information from the knowledge base and generating contextual answers."
     )
     reason: str = Field(
-        description="The reason for the decision, providing context on why a particular worker was chosen."
+        description="The reason for the decision."
     )
 
 def supervisor_node(state: MessagesState) -> Command[Literal["enhancer", "researcher", "rag"]]:
     """
-    Supervisor node for routing tasks based on the current state and LLM response.
-    Args:
-        state (MessagesState): The current state containing message history.
-    Returns:
-        Command: A command indicating the next state or action.
+    Supervisor node for routing tasks to appropriate agents.
     """
     try:
-        # Prepare messages by appending the system prompt to the message history
+        # Extract the user's question from the state
+        user_question = state["messages"][-1].content
+
         messages = [
             {"role": "system", "content": system_prompt},
-        ] + state["messages"]
+            {"role": "user", "content": user_question},
+        ]
 
-        # Invoke the language model with structured output using the Supervisor schema
         response = llm.with_structured_output(Supervisor).invoke(messages)
-        goto = response.next
+        next_agent = response.next
         reason = response.reason
-        
-        print(f"Current Node: Supervisor -> Goto: {goto}")
-        
+
+        print(f"Current Node: Supervisor -> Goto: {next_agent}")
+        print(f"Reason: {reason}")
+
         return Command(
             update={
                 "messages": [
                     HumanMessage(content=reason, name="supervisor")
                 ]
             },
-            goto=goto,
+            goto=next_agent,
         )
     except Exception as e:
         print(f"Error in supervisor_node: {e}")
-        # Default to enhancer if there's an error
         return Command(
             update={
                 "messages": [
-                    HumanMessage(content="Error in supervisor, defaulting to enhancer", name="supervisor")
+                    HumanMessage(content="Error in supervision", name="supervisor")
                 ]
             },
             goto="enhancer",
         )
 
+# Enhancer system prompt
+enhancer_system_prompt = '''
+You are a prompt enhancer. Your task is to improve user queries by:
+1. Clarifying vague or ambiguous language
+2. Adding context where needed
+3. Breaking down complex questions into simpler parts
+4. Ensuring the query is specific and actionable
+
+Provide an enhanced version of the user's question that is clearer and more specific.
+'''
+
 def enhancer_node(state: MessagesState) -> Command[Literal["supervisor"]]:
     """
-    Enhancer node for refining and clarifying user inputs.
+    Enhancer node for improving user queries.
     """
     try:
-        system_prompt = (
-            "You are an advanced query enhancer. Your task is to:\n"
-            "Don't ask anything to the user, select the most appropriate prompt\n"
-            "1. Clarify and refine user inputs.\n"
-            "2. Identify any ambiguities in the query.\n"
-            "3. Generate a more precise and actionable version of the original request.\n"
-        )
+        user_question = state["messages"][0].content
 
         messages = [
-            {"role": "system", "content": system_prompt},
-        ] + state["messages"]
+            {"role": "system", "content": enhancer_system_prompt},
+            {"role": "user", "content": user_question},
+        ]
 
-        enhanced_query = llm.invoke(messages)
-        print(f"Current Node: Prompt Enhancer -> Goto: Supervisor")
-        
+        enhanced_question = llm.invoke(messages).content
+
+        print(f"Current Node: Enhancer -> Goto: supervisor")
+        print(f"Enhanced question: {enhanced_question}")
+
         return Command(
             update={
                 "messages": [
-                    HumanMessage(
-                        content=enhanced_query.content,
-                        name="enhancer"
-                    )
+                    HumanMessage(content=enhanced_question, name="enhancer")
                 ]
             },
             goto="supervisor",
@@ -190,33 +192,37 @@ def enhancer_node(state: MessagesState) -> Command[Literal["supervisor"]]:
         return Command(
             update={
                 "messages": [
-                    HumanMessage(content="Error in enhancer", name="enhancer")
+                    HumanMessage(content="Error in enhancement", name="enhancer")
                 ]
             },
             goto="supervisor",
         )
 
+# Research system prompt
+research_system_prompt = '''
+You are a research agent. Your task is to gather information from external sources to answer the user's question.
+Use the available tools to search for relevant information and provide a comprehensive answer.
+'''
+
 def research_node(state: MessagesState) -> Command[Literal["validator"]]:
     """
-    Research node for leveraging a ReAct agent to process research-related tasks.
+    Research node for gathering information from external sources.
     """
     try:
-        research_agent = create_react_agent(
-            llm,
-            tools=[tool_tavily],
-            state_modifier="You are a researcher. Focus on gathering information and generating content. Do not perform any other tasks"
-        )
-        
-        result = research_agent.invoke(state)
-        print(f"Current Node: Researcher -> Goto: Validator")
-        
+        user_question = state["messages"][0].content
+
+        # Create a research agent
+        research_agent = create_react_agent(llm, tools, state_modifier=research_system_prompt)
+
+        # Run the research
+        result = research_agent.invoke({"input": user_question})
+
+        print(f"Current Node: Research -> Goto: validator")
+
         return Command(
             update={
                 "messages": [
-                    HumanMessage(
-                        content=result["messages"][-1].content,
-                        name="researcher"
-                    )
+                    HumanMessage(content=result["output"], name="researcher")
                 ]
             },
             goto="validator",
@@ -226,7 +232,7 @@ def research_node(state: MessagesState) -> Command[Literal["validator"]]:
         return Command(
             update={
                 "messages": [
-                    HumanMessage(content="Error in research", name="researcher")
+                    HumanMessage(content=f"Error in research: {str(e)}", name="researcher")
                 ]
             },
             goto="validator",
@@ -241,8 +247,7 @@ def rag_node(state: MessagesState) -> Command[Literal["validator"]]:
         # Import Pinecone utilities
         import sys
         sys.path.append('../Pinecone')
-        from Pinecone_utils import initialize_pinecone, connect_to_index, query_vectors
-        import pinecone
+        from Pinecone_utils import initialize_pinecone, connect_to_index, query_vectors, generate_embedding, list_indexes
         
         # Initialize Pinecone connection
         if not initialize_pinecone():
@@ -256,6 +261,7 @@ def rag_node(state: MessagesState) -> Command[Literal["validator"]]:
         user_query = None
         website_name = None
         
+        # Look for website specification in the messages
         for msg in reversed(state["messages"]):
             if hasattr(msg, 'name') and msg.name == "user":
                 user_query = msg.content
@@ -270,22 +276,73 @@ def rag_node(state: MessagesState) -> Command[Literal["validator"]]:
         if not user_query:
             user_query = state["messages"][-1].content
         
-        # Get the current index from Pinecone utils
-        from Pinecone_utils import _client
-        index = _client.current_index
+        # If no website specified, try to get available websites from Pinecone
+        if not website_name:
+            try:
+                # Query to get available websites
+                sample_query = "PiyushGarg"
+                sample_embedding = generate_embedding(sample_query)
+                
+                # Get a sample of documents to find available websites
+                sample_results = query_vectors(
+                    vector=sample_embedding,
+                    top_k=10,
+                    include_metadata=True,
+                    include_values=False
+                )
+                
+                available_websites = set()
+                for match in sample_results.matches:
+                    if hasattr(match, 'metadata') and match.metadata:
+                        website = match.metadata.get('website_name', '')
+                        if website:
+                            available_websites.add(website)
+                
+                if available_websites:
+                    website_list = ", ".join(sorted(available_websites))
+                    response_content = f"I found the following websites in the knowledge base: {website_list}. Please specify which website you'd like to query by adding 'website: [website_name]' to your question."
+                    
+                    return Command(
+                        update={
+                            "messages": [
+                                HumanMessage(content=response_content, name="rag")
+                            ]
+                        },
+                        goto="validator",
+                    )
+                else:
+                    response_content = "No websites found in the knowledge base. Please ensure your Pinecone index contains documents with website_name metadata."
+                    
+                    return Command(
+                        update={
+                            "messages": [
+                                HumanMessage(content=response_content, name="rag")
+                            ]
+                        },
+                        goto="validator",
+                    )
+                    
+            except Exception as e:
+                print(f"Error getting available websites: {e}")
+                response_content = "Please specify a website by adding 'website: [website_name]' to your question."
+                
+                return Command(
+                    update={
+                        "messages": [
+                            HumanMessage(content=response_content, name="rag")
+                        ]
+                    },
+                    goto="validator",
+                )
         
-        # Generate embedding for the query
-        from langchain.embeddings import OpenAIEmbeddings
-        embedder = OpenAIEmbeddings()
-        query_embedding = embedder.embed_query(user_query)
+        # Generate embedding for the query using Pinecone utilities
+        query_embedding = generate_embedding(user_query)
         
         # Prepare filter for website-specific query
-        filter_dict = None
-        if website_name:
-            filter_dict = {
-                'website_name': {'$eq': website_name}
-            }
-            print(f"Filtering for website: {website_name}")
+        filter_dict = {
+            'website_name': {'$eq': website_name}
+        }
+        print(f"Filtering for website: {website_name}")
         
         # Query Pinecone with website-specific filter
         try:
@@ -304,49 +361,46 @@ def rag_node(state: MessagesState) -> Command[Literal["validator"]]:
         # Extract retrieved documents with website information
         retrieved_docs = []
         website_sources = set()
+        chunk_info = []
         
         for match in matches:
             if hasattr(match, 'metadata') and match.metadata:
                 text = match.metadata.get('text', '')
                 website = match.metadata.get('website_name', 'Unknown')
                 source_url = match.metadata.get('source_url', '')
+                chunk_index = match.metadata.get('chunk_index', 'Unknown')
+                chunk_size = match.metadata.get('chunk_size', 'Unknown')
+                total_chunks = match.metadata.get('total_chunks', 'Unknown')
                 
                 retrieved_docs.append(text)
                 website_sources.add(website)
+                chunk_info.append({
+                    'chunk_index': chunk_index,
+                    'chunk_size': chunk_size,
+                    'total_chunks': total_chunks,
+                    'source_url': source_url,
+                    'score': match.score
+                })
                 
-                print(f"Retrieved from {website}: {source_url}")
+                print(f"Retrieved chunk {chunk_index}/{total_chunks} from {website}: {source_url} (Score: {match.score:.4f})")
         
         # If no documents found, provide a fallback response
         if not retrieved_docs:
-            if website_name:
-                response_content = f"I couldn't find relevant information for '{user_query}' in the knowledge base for website '{website_name}'. Please try rephrasing your question or ask about a different topic."
-            else:
-                response_content = f"I couldn't find relevant information in the knowledge base for: '{user_query}'. Please try rephrasing your question or ask about a different topic."
+            response_content = f"I couldn't find relevant information for '{user_query}' in the knowledge base for website '{website_name}'. Please try rephrasing your question or ask about a different topic."
         else:
             # Build context from retrieved documents
             context = "\n\n".join(retrieved_docs)
             
             # Create a prompt for the LLM
-            if website_name:
-                rag_prompt = f"""Based on the following retrieved information from website '{website_name}', please answer the user's question. 
-                If the information is not sufficient to answer the question completely, acknowledge what you can answer and what additional information might be needed.
+            rag_prompt = f"""Based on the following retrieved information from website '{website_name}', please answer the user's question. 
+            If the information is not sufficient to answer the question completely, acknowledge what you can answer and what additional information might be needed.
 
-                Retrieved Information from {website_name}:
-                {context}
+            Retrieved Information from {website_name}:
+            {context}
 
-                User Question: {user_query}
+            User Question: {user_query}
 
-                Answer:"""
-            else:
-                rag_prompt = f"""Based on the following retrieved information, please answer the user's question. 
-                If the information is not sufficient to answer the question completely, acknowledge what you can answer and what additional information might be needed.
-
-                Retrieved Information:
-                {context}
-
-                User Question: {user_query}
-
-                Answer:"""
+            Answer:"""
             
             # Generate response using the LLM
             llm_response = llm.invoke(rag_prompt)
@@ -488,14 +542,7 @@ def run_workflow(user_input: str):
 if __name__ == "__main__":
     # Test the workflow with different types of queries
     test_queries = [
-        "What's the weather in Hyderabad today?",
-        "What is the difference between the stock price of Apple in 2023 and 2021?",
-        "Research the impact of climate change on agriculture in Southeast Asia",
-        "How many A's are present in the string 'AVYGABAAHKJHDAAAAUHBU'?",
-        "Tell me about machine learning algorithms",  # This would use RAG if you have ML docs in Pinecone
-        "What are the best practices for data preprocessing?",  # This would use RAG if you have data science docs in Pinecone
-        "What is machine learning? website: Example Website",  # Website-specific RAG query
-        "How does the company handle customer support? website: Company Website"  # Another website-specific query
+        "What is elancode is made for ?",  # This would use RAG if you have data science docs in Pinecone
     ]
     
     print("Multi-Agent Architecture Workflow")

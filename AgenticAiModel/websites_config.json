@@ -1,0 +1,20 @@
+{
+  "Elancode2": {
+    "url": "https://elancode.vercel.app/",
+    "name": "Elancode2",
+    "chunk_size": 1000,
+    "overlap": 200,
+    "added_at": "2025-07-29T16:50:30.753343",
+    "last_updated": "2025-07-29T16:50:30.753343",
+    "status": "active"
+  },
+  "PiyushGarg": {
+    "url": "https://www.piyushgarg.dev/",
+    "name": "PiyushGarg",
+    "chunk_size": 1000,
+    "overlap": 200,
+    "added_at": "2025-07-29T16:55:25.708583",
+    "last_updated": "2025-07-29T16:55:25.708583",
+    "status": "active"
+  }
+}

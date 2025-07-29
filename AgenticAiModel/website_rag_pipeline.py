@@ -27,7 +27,7 @@ sys.path.append('../Pinecone')
 
 from crawler import DomainCrawler
 from chunking import TextChunker, ChunkingConfig
-from Pinecone_utils import initialize_pinecone, create_index, connect_to_index, upsert_vectors, query_vectors
+from Pinecone_utils import initialize_pinecone, create_index, connect_to_index, upsert_vectors, query_vectors, generate_embedding
 
 # Load environment variables
 try:
@@ -196,9 +196,9 @@ class WebsiteRAGPipeline:
         
         return vectors
     
-
+    def _generate_embedding(self, text: str) -> List[float]:
         """
-        Generate embedding for text using OpenAI embeddings.
+        Generate embedding for text using Pinecone utilities.
         
         Args:
             text: Text to embed
@@ -207,16 +207,14 @@ class WebsiteRAGPipeline:
             List of float values representing the embedding
         """
         try:
-            from langchain.embeddings import OpenAIEmbeddings
-            
-            embedder = OpenAIEmbeddings()
-            embedding = embedder.embed_query(text)
+            # Use the Pinecone utility function
+            embedding = generate_embedding(text)
             return embedding
             
         except Exception as e:
             self.logger.error(f"Error generating embedding: {e}")
             # Return a dummy embedding (you should handle this properly)
-            return [0.0] * 1536  # Default OpenAI embedding dimension
+            return [0.0] * 768  # BGE model dimension
     def store_in_pinecone(self, vectors: List[Dict]) -> bool:
         """
         Store vectors in Pinecone with website-specific filtering.
